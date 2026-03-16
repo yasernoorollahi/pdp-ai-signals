@@ -36,6 +36,8 @@ It follows a layered architecture and supports provider swapping (OpenAI/Ollama/
 - Standardized error responses and request timing logs
 - Built-in Swagger/OpenAPI docs
 
+![PDP AI Signal Architecture](pdp-ai-signals_architecture_overview.png)
+
 ## Architecture
 
 ```txt
