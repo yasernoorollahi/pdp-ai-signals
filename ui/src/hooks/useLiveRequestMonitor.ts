@@ -248,25 +248,30 @@ export function useLiveRequestMonitor() {
   }, [timelines]);
 
   const jobRows = useMemo(() => {
-    const grouped = new Map<string, LiveJobRow>();
+    const uiRows = new Map<string, LiveJobRow>();
+    const externalTimelines: RequestTimeline[] = [];
 
     for (const timeline of timelines) {
-      const groupingKey = timeline.pipelineRunId ?? timeline.requestId;
-      const existing = grouped.get(groupingKey);
+      if (!timeline.pipelineRunId) {
+        externalTimelines.push(timeline);
+        continue;
+      }
+
+      const groupingKey = timeline.pipelineRunId;
+      const existing = uiRows.get(groupingKey);
 
       if (!existing) {
-        grouped.set(groupingKey, {
+        uiRows.set(groupingKey, {
           id: groupingKey,
-          ...(timeline.pipelineRunId ? { pipelineRunId: timeline.pipelineRunId } : {}),
+          pipelineRunId: groupingKey,
           requestId: timeline.requestId,
-          label: timeline.pipelineRunId ? timeline.pipelineRunId : `${timeline.routeLabel} API`,
-          sourceLabel: timeline.pipelineRunId ? 'ui job' : 'external api',
+          label: groupingKey,
+          sourceLabel: 'ui job',
           ...(timeline.provider ? { provider: timeline.provider } : {}),
           ...(timeline.model ? { model: timeline.model } : {}),
           phase: timeline.phase,
           createdAt: timeline.startedAt,
           updatedAt: timeline.updatedAt,
-          ...(typeof timeline.durationMs === 'number' ? { durationMs: timeline.durationMs } : {}),
           stages: createJobStages([timeline])
         });
         continue;
@@ -281,10 +286,14 @@ export function useLiveRequestMonitor() {
       if (timeline.model) {
         existing.model = timeline.model;
       }
-      existing.stages = createJobStages([...timelines.filter((item) => (item.pipelineRunId ?? item.requestId) === groupingKey)]);
+      existing.stages = createJobStages(
+        timelines.filter((item) => item.pipelineRunId === groupingKey)
+      );
     }
 
-    return [...grouped.values()]
+    const externalRows = createExternalJobRows(externalTimelines);
+
+    return [...uiRows.values(), ...externalRows]
       .map((row) => ({
         ...row,
         durationMs: Math.max(0, new Date(row.updatedAt).getTime() - new Date(row.createdAt).getTime())
@@ -390,4 +399,86 @@ function minIso(left: string, right: string): string {
 
 function maxIso(left: string, right: string): string {
   return left >= right ? left : right;
+}
+
+function createExternalJobRows(timelines: RequestTimeline[]): LiveJobRow[] {
+  const batches = new Map<
+    string,
+    {
+      id: string;
+      provider?: string;
+      model?: string;
+      createdAt: string;
+      updatedAt: string;
+      timelines: RequestTimeline[];
+      minuteLabel: string;
+    }
+  >();
+
+  for (const timeline of timelines) {
+    const minuteBucket = toMinuteBucket(timeline.startedAt);
+    const providerKey = timeline.provider ?? 'default';
+    const modelKey = timeline.model ?? 'default';
+    const batchKey = `${minuteBucket}__${providerKey}__${modelKey}`;
+    const existing = batches.get(batchKey);
+
+    if (!existing) {
+      batches.set(batchKey, {
+        id: `external-${batchKey}`,
+        ...(timeline.provider ? { provider: timeline.provider } : {}),
+        ...(timeline.model ? { model: timeline.model } : {}),
+        createdAt: timeline.startedAt,
+        updatedAt: timeline.updatedAt,
+        timelines: [timeline],
+        minuteLabel: formatMinuteLabel(timeline.startedAt)
+      });
+      continue;
+    }
+
+    existing.createdAt = minIso(existing.createdAt, timeline.startedAt);
+    existing.updatedAt = maxIso(existing.updatedAt, timeline.updatedAt);
+    const existingIndex = existing.timelines.findIndex((item) => item.routeLabel === timeline.routeLabel);
+    if (existingIndex >= 0) {
+      const currentTimeline = existing.timelines[existingIndex];
+      if (currentTimeline) {
+        existing.timelines[existingIndex] = preferNewerTimeline(currentTimeline, timeline);
+      }
+    } else {
+      existing.timelines.push(timeline);
+    }
+  }
+
+  return [...batches.values()].map((batch) => ({
+    id: batch.id,
+    requestId: batch.timelines[0]?.requestId ?? batch.id,
+    label: `External ${batch.minuteLabel}`,
+    sourceLabel: 'external api',
+    ...(batch.provider ? { provider: batch.provider } : {}),
+    ...(batch.model ? { model: batch.model } : {}),
+    phase: batch.timelines.reduce<LiveRequestPhase>((current, timeline) => mergePhase(current, timeline.phase), 'idle'),
+    createdAt: batch.createdAt,
+    updatedAt: batch.updatedAt,
+    stages: createJobStages(batch.timelines)
+  }));
+}
+
+function preferNewerTimeline(left: RequestTimeline, right: RequestTimeline): RequestTimeline {
+  return right.updatedAt >= left.updatedAt ? right : left;
+}
+
+function toMinuteBucket(value: string): string {
+  const date = new Date(value);
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  const hours = `${date.getHours()}`.padStart(2, '0');
+  const minutes = `${date.getMinutes()}`.padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function formatMinuteLabel(value: string): string {
+  return new Date(value).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
