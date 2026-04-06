@@ -8,7 +8,8 @@ export default defineConfig({
     proxy: {
       '/extract': 'http://localhost:3000',
       '/models': 'http://localhost:3000',
-      '/health': 'http://localhost:3000'
+      '/health': 'http://localhost:3000',
+      '/monitor': 'http://localhost:3000'
     }
   }
 });

@@ -8,24 +8,45 @@ import {
 } from '../schemas/message-classifier.schema.js';
 import { OutputValidationError } from '../utils/errors.js';
 import { parseStrictJson } from '../utils/parseJson.js';
+import type { LiveRequestMonitor } from '../utils/liveRequestMonitor.js';
+import type { RequestTraceContext } from '../interfaces/RequestTraceContext.js';
+import { emitTraceStage } from '../utils/requestTracing.js';
 
 export class MessageClassifierService implements IMessageClassifierService {
-  constructor(private readonly aiClient: IAIClientService) {}
+  constructor(
+    private readonly aiClient: IAIClientService,
+    private readonly liveRequestMonitor?: LiveRequestMonitor,
+    private readonly trace?: RequestTraceContext
+  ) {}
 
   public async classify(text: string): Promise<MessageClassificationResult> {
+    this.emitStage('service-start', 'Classification Start', 'started', 1, {
+      textLength: text.length
+    });
     const prompt = buildMessageClassifierPrompt(text);
+    this.emitStage('prompt-built', 'Prompt Built', 'completed', 2, {
+      promptLength: prompt.length
+    });
     const raw = await this.aiClient.generate(prompt);
     const parsed = parseStrictJson(raw);
+    this.emitStage('response-parsed', 'Response Parsed', 'completed', 5);
     const normalized = this.normalizeParsedOutput(parsed);
     const validated = MessageClassificationResultSchema.safeParse(normalized);
 
     if (!validated.success) {
+      this.emitStage('schema-validation', 'Schema Validated', 'failed', 6, {
+        issues: validated.error.issues.length
+      });
       throw new OutputValidationError('Message classification output failed schema validation', {
         issues: validated.error.format(),
         raw
       });
     }
 
+    this.emitStage('schema-validation', 'Schema Validated', 'completed', 6, {
+      score: validated.data.score,
+      decision: validated.data.decision
+    });
     return validated.data;
   }
 
@@ -62,5 +83,22 @@ export class MessageClassifierService implements IMessageClassifierService {
     }
 
     throw new OutputValidationError('Message classification output missing a numeric score', { score: value });
+  }
+
+  private emitStage(
+    stageKey: string,
+    label: string,
+    status: 'started' | 'completed' | 'failed',
+    order: number,
+    meta?: Record<string, unknown>
+  ): void {
+    if (!this.liveRequestMonitor || !this.trace) {
+      return;
+    }
+
+    emitTraceStage(this.liveRequestMonitor, this.trace, stageKey, label, status, {
+      order,
+      ...(meta ? { meta } : {})
+    });
   }
 }

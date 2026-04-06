@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { fetchModels, runExtractionStep, STEP_ENDPOINTS } from '../services/apiClient';
-const EMPTY_STEPS = STEP_ENDPOINTS.map((step) => ({
-    key: step.key,
-    label: step.label,
-    endpoint: step.endpoint,
-    status: 'idle'
-}));
 export function useSignalOrchestrator() {
     const [provider, setProvider] = useState('ollama');
     const [model, setModel] = useState('');
@@ -17,11 +11,8 @@ export function useSignalOrchestrator() {
     const [modelsLoading, setModelsLoading] = useState(false);
     const [modelsError, setModelsError] = useState(null);
     const [modelsInfo, setModelsInfo] = useState(null);
-    const [processing, setProcessing] = useState(false);
-    const [steps, setSteps] = useState(EMPTY_STEPS);
-    const [processingTimeMs, setProcessingTimeMs] = useState(null);
-    const [activeStep, setActiveStep] = useState(null);
-    const [globalError, setGlobalError] = useState(null);
+    const [runs, setRuns] = useState([]);
+    const [selectedRunId, setSelectedRunId] = useState(null);
     const currentModels = modelsByProvider[provider] ?? [];
     const loadModels = useCallback(async (selectedProvider, force = false) => {
         if (!force && modelsByProvider[selectedProvider].length > 0) {
@@ -66,68 +57,110 @@ export function useSignalOrchestrator() {
             setModel(available[0] ?? '');
         }
     }, [model, modelsByProvider, provider]);
+    const updateRun = useCallback((runId, updater) => {
+        setRuns((current) => current.map((run) => (run.id === runId ? updater(run) : run)));
+    }, []);
     const run = useCallback(async (text) => {
         const cleanText = text.trim();
-        if (!cleanText || !model || processing) {
+        if (!cleanText || !model) {
             return;
         }
-        setProcessing(true);
-        setGlobalError(null);
-        setProcessingTimeMs(null);
-        setSteps(EMPTY_STEPS);
+        const runId = createRunId();
+        const snapshotProvider = provider;
+        const snapshotModel = model;
+        setRuns((current) => [
+            {
+                id: runId,
+                text: cleanText,
+                provider: snapshotProvider,
+                model: snapshotModel,
+                createdAt: new Date().toISOString(),
+                processing: true,
+                steps: createEmptySteps(),
+                activeStep: null,
+                processingTimeMs: null,
+                globalError: null
+            },
+            ...current
+        ]);
+        setSelectedRunId(runId);
         const processStart = performance.now();
         for (const step of STEP_ENDPOINTS) {
-            setActiveStep(step.key);
-            setSteps((prev) => prev.map((item) => item.key === step.key
-                ? {
-                    ...item,
-                    status: 'running'
-                }
-                : item));
+            updateRun(runId, (currentRun) => ({
+                ...currentRun,
+                activeStep: step.key,
+                steps: currentRun.steps.map((item) => item.key === step.key
+                    ? {
+                        ...item,
+                        status: 'running'
+                    }
+                    : item)
+            }));
             const stepStart = performance.now();
             try {
                 const result = await runExtractionStep(step.endpoint, {
                     text: cleanText,
-                    provider,
-                    model
+                    provider: snapshotProvider,
+                    model: snapshotModel
+                }, {
+                    pipelineRunId: runId
                 });
                 const durationMs = performance.now() - stepStart;
-                setSteps((prev) => prev.map((item) => item.key === step.key
-                    ? {
-                        ...item,
-                        status: 'completed',
-                        result,
-                        durationMs
-                    }
-                    : item));
+                updateRun(runId, (currentRun) => ({
+                    ...currentRun,
+                    steps: currentRun.steps.map((item) => item.key === step.key
+                        ? {
+                            ...item,
+                            status: 'completed',
+                            result,
+                            durationMs
+                        }
+                        : item)
+                }));
             }
             catch (error) {
                 const message = extractErrorMessage(error);
-                setSteps((prev) => prev.map((item) => item.key === step.key
-                    ? {
-                        ...item,
-                        status: 'error',
-                        error: message
-                    }
-                    : item));
-                setGlobalError(`Step failed: ${step.label}. ${message}`);
-                setProcessing(false);
-                setActiveStep(step.key);
-                setProcessingTimeMs(performance.now() - processStart);
+                updateRun(runId, (currentRun) => ({
+                    ...currentRun,
+                    processing: false,
+                    activeStep: step.key,
+                    processingTimeMs: performance.now() - processStart,
+                    globalError: `Step failed: ${step.label}. ${message}`,
+                    steps: currentRun.steps.map((item) => item.key === step.key
+                        ? {
+                            ...item,
+                            status: 'error',
+                            error: message
+                        }
+                        : item)
+                }));
                 return;
             }
         }
-        setProcessing(false);
-        setActiveStep(null);
-        setProcessingTimeMs(performance.now() - processStart);
-    }, [model, processing, provider]);
-    const canSubmit = useMemo(() => !processing && model.length > 0, [model.length, processing]);
-    const combinedData = useMemo(() => steps.reduce((acc, step) => {
+        updateRun(runId, (currentRun) => ({
+            ...currentRun,
+            processing: false,
+            activeStep: null,
+            processingTimeMs: performance.now() - processStart
+        }));
+    }, [model, provider, updateRun]);
+    const selectedRun = useMemo(() => {
+        if (runs.length === 0) {
+            return null;
+        }
+        if (selectedRunId) {
+            return runs.find((run) => run.id === selectedRunId) ?? runs[0];
+        }
+        return runs[0];
+    }, [runs, selectedRunId]);
+    const processingCount = useMemo(() => runs.filter((runItem) => runItem.processing).length, [runs]);
+    const canSubmit = useMemo(() => model.length > 0, [model.length]);
+    const combinedData = useMemo(() => (selectedRun?.steps ?? []).reduce((acc, step) => {
         if (step.result) {
             acc[step.key] = step.result.data;
         }
         return acc;
-    }, {}), [steps]);
+    }, {}), [selectedRun]);
     return {
         provider,
         setProvider,
@@ -138,15 +171,31 @@ export function useSignalOrchestrator() {
         modelsError,
         modelsInfo,
         reloadModels: (force = true) => loadModels(provider, force),
-        processing,
-        steps,
-        activeStep,
-        processingTimeMs,
-        globalError,
+        runs,
+        selectedRun,
+        selectedRunId,
+        setSelectedRunId,
+        processing: processingCount > 0,
+        processingCount,
+        steps: selectedRun?.steps ?? createEmptySteps(),
+        activeStep: selectedRun?.activeStep ?? null,
+        processingTimeMs: selectedRun?.processingTimeMs ?? null,
+        globalError: selectedRun?.globalError ?? null,
         combinedData,
         canSubmit,
         run
     };
+}
+function createEmptySteps() {
+    return STEP_ENDPOINTS.map((step) => ({
+        key: step.key,
+        label: step.label,
+        endpoint: step.endpoint,
+        status: 'idle'
+    }));
+}
+function createRunId() {
+    return `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 function extractErrorMessage(error) {
     if (axios.isAxiosError(error)) {

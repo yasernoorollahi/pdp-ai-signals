@@ -1,9 +1,13 @@
 import type { FastifyInstance } from 'fastify';
-import { parseExtractBody, toProviderOverrides } from './controllerUtils.js';
+import { parseExtractBody, toProviderOverrides, traceExtractionRequest } from './controllerUtils.js';
 import { ExtractionServiceFactory } from '../services/ExtractionServiceFactory.js';
+import type { LiveRequestMonitor } from '../utils/liveRequestMonitor.js';
 
 export class MessageClassifierController {
-  constructor(private readonly extractionFactory: ExtractionServiceFactory) {}
+  constructor(
+    private readonly extractionFactory: ExtractionServiceFactory,
+    private readonly liveRequestMonitor: LiveRequestMonitor
+  ) {}
 
   public register(app: FastifyInstance): void {
     /**
@@ -51,7 +55,8 @@ export class MessageClassifierController {
         'message classification started'
       );
 
-      const service = this.extractionFactory.createMessageClassifierService(toProviderOverrides({ provider, model }));
+      const trace = traceExtractionRequest(request, this.liveRequestMonitor, { provider, model });
+      const service = this.extractionFactory.createMessageClassifierService(toProviderOverrides({ provider, model }), trace);
       const result = await service.classify(text);
 
       request.log.info(
