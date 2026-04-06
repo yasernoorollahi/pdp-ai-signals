@@ -21,6 +21,44 @@ async function buildServer() {
     done();
   });
 
+  app.addHook('onError', (request, reply, error, done) => {
+    container.requestLogger.onError?.(request, reply, error);
+    done();
+  });
+
+  app.get('/monitor/stream', async (request, reply) => {
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+
+    const sendEvent = (eventName: string, payload: unknown) => {
+      reply.raw.write(`event: ${eventName}\n`);
+      reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    sendEvent('snapshot', container.liveRequestMonitor.getHistory());
+
+    const unsubscribe = container.liveRequestMonitor.subscribe((event) => {
+      sendEvent('request', event);
+    });
+
+    const heartbeat = setInterval(() => {
+      reply.raw.write(': keep-alive\n\n');
+    }, 15000);
+
+    request.raw.on('close', () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+      reply.raw.end();
+    });
+
+    return reply;
+  });
+
   await registerSwagger(app, container.config.PORT);
 
   container.healthController.register(app);

@@ -12,6 +12,7 @@ import { SignalsController } from '../controllers/SignalsController.js';
 import { MessageClassifierController } from '../controllers/MessageClassifierController.js';
 import { RequestLogger } from '../utils/requestLogger.js';
 import { ExtractionServiceFactory } from '../services/ExtractionServiceFactory.js';
+import { LiveRequestMonitor } from '../utils/liveRequestMonitor.js';
 
 export class AppContainer {
   public readonly config: AppConfig;
@@ -29,22 +30,24 @@ export class AppContainer {
 
   public readonly orchestratorService: SignalOrchestratorService;
   public readonly requestLogger: RequestLogger;
+  public readonly liveRequestMonitor: LiveRequestMonitor;
 
   constructor() {
     this.config = loadConfig();
-    const extractionFactory = new ExtractionServiceFactory(this.config);
+    this.liveRequestMonitor = new LiveRequestMonitor();
+    const extractionFactory = new ExtractionServiceFactory(this.config, this.liveRequestMonitor);
     this.orchestratorService = extractionFactory.createOrchestratorService();
-    this.factsController = new FactsController(extractionFactory);
-    this.intentController = new IntentController(extractionFactory);
-    this.toneController = new ToneController(extractionFactory);
-    this.cognitiveController = new CognitiveController(extractionFactory);
-    this.contextController = new ContextController(extractionFactory);
-    this.topicsController = new TopicsController(extractionFactory);
+    this.factsController = new FactsController(extractionFactory, this.liveRequestMonitor);
+    this.intentController = new IntentController(extractionFactory, this.liveRequestMonitor);
+    this.toneController = new ToneController(extractionFactory, this.liveRequestMonitor);
+    this.cognitiveController = new CognitiveController(extractionFactory, this.liveRequestMonitor);
+    this.contextController = new ContextController(extractionFactory, this.liveRequestMonitor);
+    this.topicsController = new TopicsController(extractionFactory, this.liveRequestMonitor);
     this.healthController = new HealthController();
     this.modelsController = new ModelsController(this.config);
-    this.signalsController = new SignalsController(extractionFactory);
-    this.messageClassifierController = new MessageClassifierController(extractionFactory);
+    this.signalsController = new SignalsController(extractionFactory, this.liveRequestMonitor);
+    this.messageClassifierController = new MessageClassifierController(extractionFactory, this.liveRequestMonitor);
 
-    this.requestLogger = new RequestLogger();
+    this.requestLogger = new RequestLogger(this.liveRequestMonitor);
   }
 }

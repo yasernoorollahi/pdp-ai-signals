@@ -18,7 +18,13 @@ export async function fetchModels(provider) {
     const { data } = await apiClient.get(`/models/${provider}`);
     return data;
 }
-export async function runExtractionStep(endpoint, payload) {
-    const { data } = await apiClient.post(endpoint, payload);
-    return data;
+export async function runExtractionStep(endpoint, payload, options) {
+    const response = await apiClient.post(endpoint, payload, options?.pipelineRunId
+        ? {
+            headers: {
+                'X-Pipeline-Run-Id': options.pipelineRunId
+            }
+        }
+        : {});
+    return response.data;
 }

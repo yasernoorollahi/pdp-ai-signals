@@ -4,13 +4,15 @@ import { BaseExtractionService } from './BaseExtractionService.js';
 import type { IToneExtractionService } from '../interfaces/IToneExtractionService.js';
 import type { ToneData } from '../schemas/tone.schema.js';
 import type { IAIClientService } from '../interfaces/IAIClientService.js';
+import type { LiveRequestMonitor } from '../utils/liveRequestMonitor.js';
+import type { RequestTraceContext } from '../interfaces/RequestTraceContext.js';
 
 export class ToneExtractionService
   extends BaseExtractionService<ToneData>
   implements IToneExtractionService
 {
-  constructor(aiClient: IAIClientService) {
-    super(aiClient, buildTonePrompt, ToneSignalSchema);
+  constructor(aiClient: IAIClientService, liveRequestMonitor?: LiveRequestMonitor, trace?: RequestTraceContext) {
+    super(aiClient, buildTonePrompt, ToneSignalSchema, liveRequestMonitor, trace);
   }
 
   protected override normalizeParsedOutput(parsed: unknown): unknown {

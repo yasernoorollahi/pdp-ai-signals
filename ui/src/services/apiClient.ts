@@ -50,8 +50,19 @@ export async function fetchModels(provider: ProviderType): Promise<ModelsRespons
 
 export async function runExtractionStep<T = unknown>(
   endpoint: string,
-  payload: { text: string; provider: ProviderType; model: string }
+  payload: { text: string; provider: ProviderType; model: string },
+  options?: { pipelineRunId?: string }
 ): Promise<SignalEnvelope<T>> {
-  const { data } = await apiClient.post<SignalEnvelope<T>>(endpoint, payload);
-  return data;
+  const response = await apiClient.post<SignalEnvelope<T>>(
+    endpoint,
+    payload,
+    options?.pipelineRunId
+      ? {
+          headers: {
+            'X-Pipeline-Run-Id': options.pipelineRunId
+          }
+        }
+      : {}
+  );
+  return response.data as SignalEnvelope<T>;
 }

@@ -1,9 +1,13 @@
 import type { FastifyInstance } from 'fastify';
-import { parseExtractBody, toProviderOverrides } from './controllerUtils.js';
+import { parseExtractBody, toProviderOverrides, traceExtractionRequest } from './controllerUtils.js';
 import { ExtractionServiceFactory } from '../services/ExtractionServiceFactory.js';
+import type { LiveRequestMonitor } from '../utils/liveRequestMonitor.js';
 
 export class IntentController {
-  constructor(private readonly extractionFactory: ExtractionServiceFactory) {}
+  constructor(
+    private readonly extractionFactory: ExtractionServiceFactory,
+    private readonly liveRequestMonitor: LiveRequestMonitor
+  ) {}
 
   public register(app: FastifyInstance): void {
     /**
@@ -46,7 +50,8 @@ export class IntentController {
      */
     app.post('/extract/intent', async (request, reply) => {
       const { text, provider, model } = parseExtractBody(request.body);
-      const service = this.extractionFactory.createIntentService(toProviderOverrides({ provider, model }));
+      const trace = traceExtractionRequest(request, this.liveRequestMonitor, { provider, model });
+      const service = this.extractionFactory.createIntentService(toProviderOverrides({ provider, model }), trace);
       const result = await service.extract(text);
       reply.status(200).send(result);
     });

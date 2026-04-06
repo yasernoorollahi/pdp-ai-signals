@@ -5,6 +5,9 @@ import type { IToneExtractionService } from '../interfaces/IToneExtractionServic
 import type { ICognitiveExtractionService } from '../interfaces/ICognitiveExtractionService.js';
 import type { IContextExtractionService } from '../interfaces/IContextExtractionService.js';
 import type { ITopicsExtractionService } from '../interfaces/ITopicsExtractionService.js';
+import type { LiveRequestMonitor } from '../utils/liveRequestMonitor.js';
+import type { RequestTraceContext } from '../interfaces/RequestTraceContext.js';
+import { emitTraceStage } from '../utils/requestTracing.js';
 
 export class SignalOrchestratorService implements IOrchestratorService {
   constructor(
@@ -13,16 +16,30 @@ export class SignalOrchestratorService implements IOrchestratorService {
     private readonly toneService: IToneExtractionService,
     private readonly cognitiveService: ICognitiveExtractionService,
     private readonly contextService: IContextExtractionService,
-    private readonly topicsService: ITopicsExtractionService
+    private readonly topicsService: ITopicsExtractionService,
+    private readonly liveRequestMonitor?: LiveRequestMonitor,
+    private readonly trace?: RequestTraceContext
   ) {}
 
   public async extractAll(text: string): Promise<CombinedSignals> {
+    this.emitStep('facts', 'Facts', 'started', 3);
     const facts = await this.factsService.extract(text);
+    this.emitStep('facts', 'Facts', 'completed', 3);
+    this.emitStep('intent', 'Intent', 'started', 4);
     const intent = await this.intentService.extract(text);
+    this.emitStep('intent', 'Intent', 'completed', 4);
+    this.emitStep('tone', 'Tone', 'started', 5);
     const tone = await this.toneService.extract(text);
+    this.emitStep('tone', 'Tone', 'completed', 5);
+    this.emitStep('cognitive', 'Cognitive', 'started', 6);
     const cognitive = await this.cognitiveService.extract(text);
+    this.emitStep('cognitive', 'Cognitive', 'completed', 6);
+    this.emitStep('context', 'Context', 'started', 7);
     const context = await this.contextService.extract(text);
+    this.emitStep('context', 'Context', 'completed', 7);
+    this.emitStep('topics', 'Topics', 'started', 8);
     const topics = await this.topicsService.extract(text);
+    this.emitStep('topics', 'Topics', 'completed', 8);
 
     const confidence =
       (facts.meta.confidence +
@@ -48,5 +65,20 @@ export class SignalOrchestratorService implements IOrchestratorService {
         topics: topics.data
       }
     };
+  }
+
+  private emitStep(
+    stageKey: string,
+    label: string,
+    status: 'started' | 'completed' | 'failed',
+    order: number
+  ): void {
+    if (!this.liveRequestMonitor || !this.trace) {
+      return;
+    }
+
+    emitTraceStage(this.liveRequestMonitor, this.trace, `orchestrator-${stageKey}`, `Pipeline ${label}`, status, {
+      order
+    });
   }
 }
